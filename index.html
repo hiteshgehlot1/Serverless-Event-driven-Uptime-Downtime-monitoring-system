@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Serverless Uptime Monitor</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; padding: 2rem; max-width: 800px; margin: auto; }
+        h1 { color: #38bdf8; border-bottom: 2px solid #334155; padding-bottom: 0.5rem; }
+        .card { background: #1e293b; padding: 1.25rem; margin-y: 1rem; border-radius: 8px; border-left: 6px solid #64748b; margin-top: 10px; }
+        .UP { border-left-color: #22c55e; }
+        .DOWN { border-left-color: #ef4444; }
+        .status { font-weight: bold; text-transform: uppercase; }
+        .status.UP { color: #22c55e; }
+        .status.DOWN { color: #ef4444; }
+        .meta { color: #94a3b8; font-size: 0.9rem; margin-top: 0.5rem; }
+    </style>
+</head>
+<body>
+    <h1>System Operational Status</h1>
+    <div id="monitors">Loading telemetry data...</div>
+
+    <script>
+        // REPLACE WITH YOUR ACTUAL LAMBDA FUNCTION URL
+        const API_URL = "https://2mz5t4qa3w2fy7eryeayin7uiq0aaamz.lambda-url.us-east-1.on.aws/";
+
+        async function fetchStatus() {
+            try {
+                const res = await fetch(API_URL);
+                const data = await res.json();
+                const container = document.getElementById('monitors');
+                container.innerHTML = '';
+
+                data.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = `card ${item.status}`;
+                    card.innerHTML = `
+                        <div><strong>${item.site_url}</strong> — <span class="status ${item.status}">${item.status}</span></div>
+                        <div class="meta">HTTP ${item.status_code} | Latency: ${item.latency_ms} ms</div>
+                    `;
+                    container.appendChild(card);
+                });
+            } catch (err) {
+                document.getElementById('monitors').innerText = 'Failed to load telemetry data.';
+            }
+        }
+        fetchStatus();
+    </script>
+</body>
+</html>

@@ -134,3 +134,80 @@ output "sns_topic_arn" {
 output "lambda_role_arn" {
   value = aws_iam_role.lambda_exec_role.arn
 }
+
+
+# Package Python code into a ZIP archive automatically
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "${path.module}/src/lambda_function.py"
+  output_path = "${path.module}/lambda_function.zip"
+}
+
+# AWS Lambda Function
+resource "aws_lambda_function" "uptime_checker" {
+  filename         = data.archive_file.lambda_zip.output_path
+  function_name    = "uptime-monitor-checker"
+  role             = aws_iam_role.lambda_exec_role.arn
+  handler          = "lambda_function.lambda_handler"
+  runtime          = "python3.11"
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      DYNAMODB_TABLE = aws_dynamodb_table.uptime_logs.name
+      SNS_TOPIC_ARN  = aws_sns_topic.downtime_alerts.arn
+    }
+  }
+}
+
+# Public Lambda Function URL (CORS Enabled)
+resource "aws_lambda_function_url" "lambda_public_url" {
+  function_name      = aws_lambda_function.uptime_checker.function_name
+  authorization_type = "NONE"
+
+  cors {
+    allow_credentials = false
+    allow_origins     = ["*"]
+    allow_methods     = ["GET"]
+  }
+}
+
+# Link EventBridge Trigger to Lambda Function
+resource "aws_cloudwatch_event_target" "trigger_lambda_on_schedule" {
+  rule      = aws_cloudwatch_event_rule.every_five_minutes.name
+  target_id = "UptimeLambdaTarget"
+  arn       = aws_lambda_function.uptime_checker.arn
+}
+
+# Grant EventBridge permission to invoke the Lambda Function
+resource "aws_lambda_permission" "allow_eventbridge" {
+  statement_id  = "AllowExecutionFromEventBridge"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.uptime_checker.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.every_five_minutes.arn
+}
+
+# Additional Terraform Output
+output "function_url" {
+  value = aws_lambda_function_url.lambda_public_url.function_url
+}
+
+
+# Allow public unauthenticated access to the Lambda Function URL
+# Permission 1: Grants public permission to call the Function URL
+resource "aws_lambda_permission" "allow_public_function_url" {
+  statement_id           = "AllowFunctionURLPublicAccess"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.uptime_checker.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+
+# Permission 2: Grants underlying invocation permissions required by AWS
+resource "aws_lambda_permission" "allow_public_function_invoke" {
+  statement_id  = "AllowFunctionURLInvokePublicAccess"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.uptime_checker.function_name
+  principal     = "*"
+}
