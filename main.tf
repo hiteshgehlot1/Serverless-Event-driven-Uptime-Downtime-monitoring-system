@@ -11,6 +11,7 @@ provider "aws" {
   region = var.aws_region
 }
 
+# --- Variables ---
 variable "aws_region" {
   type    = string
   default = "us-east-1"
@@ -21,7 +22,7 @@ variable "alert_email" {
   description = "Email address to receive immediate website downtime alerts"
 }
 
-# 1. DynamoDB Table for Health Metrics
+# --- 1. DynamoDB Table for Health Metrics ---
 resource "aws_dynamodb_table" "uptime_logs" {
   name         = "UptimeMetrics"
   billing_mode = "PAY_PER_REQUEST" # Always Free tier compliant
@@ -44,7 +45,7 @@ resource "aws_dynamodb_table" "uptime_logs" {
   }
 }
 
-# 2. SNS Topic for Email Alerts
+# --- 2. SNS Topic for Email Alerts ---
 resource "aws_sns_topic" "downtime_alerts" {
   name = "uptime-downtime-alerts"
 }
@@ -55,7 +56,7 @@ resource "aws_sns_topic_subscription" "email_subscription" {
   endpoint  = var.alert_email
 }
 
-# 3. IAM Execution Role for Lambda Function
+# --- 3. IAM Execution Role & Policy for Lambda ---
 resource "aws_iam_role" "lambda_exec_role" {
   name = "uptime_monitor_lambda_role"
 
@@ -73,7 +74,6 @@ resource "aws_iam_role" "lambda_exec_role" {
   })
 }
 
-# IAM Policy: Least-Privilege permissions for DynamoDB, SNS, and CloudWatch
 resource "aws_iam_policy" "lambda_policy" {
   name        = "uptime_monitor_lambda_policy"
   description = "Allows Lambda to log metrics, publish to SNS, and write to DynamoDB"
@@ -115,35 +115,20 @@ resource "aws_iam_role_policy_attachment" "attach_lambda_policy" {
   policy_arn = aws_iam_policy.lambda_policy.arn
 }
 
-# 4. EventBridge Rule (Cron schedule every 5 minutes)
+# --- 4. EventBridge Schedule (Every 5 minutes) ---
 resource "aws_cloudwatch_event_rule" "every_five_minutes" {
   name                = "uptime-check-schedule"
   description         = "Triggers health check Lambda every 5 minutes"
   schedule_expression = "rate(5 minutes)"
 }
 
-# Terraform Outputs
-output "dynamodb_table_name" {
-  value = aws_dynamodb_table.uptime_logs.name
-}
-
-output "sns_topic_arn" {
-  value = aws_sns_topic.downtime_alerts.arn
-}
-
-output "lambda_role_arn" {
-  value = aws_iam_role.lambda_exec_role.arn
-}
-
-
-# Package Python code into a ZIP archive automatically
+# --- 5. Lambda Function Packaging & Resource ---
 data "archive_file" "lambda_zip" {
   type        = "zip"
   source_file = "${path.module}/src/lambda_function.py"
   output_path = "${path.module}/lambda_function.zip"
 }
 
-# AWS Lambda Function
 resource "aws_lambda_function" "uptime_checker" {
   filename         = data.archive_file.lambda_zip.output_path
   function_name    = "uptime-monitor-checker"
@@ -160,26 +145,25 @@ resource "aws_lambda_function" "uptime_checker" {
   }
 }
 
-# Public Lambda Function URL (CORS Enabled)
+# --- 6. Public Lambda Function URL (CORS Enabled) ---
 resource "aws_lambda_function_url" "lambda_public_url" {
   function_name      = aws_lambda_function.uptime_checker.function_name
   authorization_type = "NONE"
 
   cors {
-    allow_credentials = false
-    allow_origins     = ["*"]
-    allow_methods     = ["GET"]
+    allow_origins = ["*"]
+    allow_methods = ["GET"]
+    allow_headers = ["*"]
   }
 }
 
-# Link EventBridge Trigger to Lambda Function
+# --- 7. EventBridge & URL Invoke Permissions ---
 resource "aws_cloudwatch_event_target" "trigger_lambda_on_schedule" {
   rule      = aws_cloudwatch_event_rule.every_five_minutes.name
   target_id = "UptimeLambdaTarget"
   arn       = aws_lambda_function.uptime_checker.arn
 }
 
-# Grant EventBridge permission to invoke the Lambda Function
 resource "aws_lambda_permission" "allow_eventbridge" {
   statement_id  = "AllowExecutionFromEventBridge"
   action        = "lambda:InvokeFunction"
@@ -188,14 +172,6 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   source_arn    = aws_cloudwatch_event_rule.every_five_minutes.arn
 }
 
-# Additional Terraform Output
-output "function_url" {
-  value = aws_lambda_function_url.lambda_public_url.function_url
-}
-
-
-# Allow public unauthenticated access to the Lambda Function URL
-# Permission 1: Grants public permission to call the Function URL
 resource "aws_lambda_permission" "allow_public_function_url" {
   statement_id           = "AllowFunctionURLPublicAccess"
   action                 = "lambda:InvokeFunctionUrl"
@@ -204,10 +180,26 @@ resource "aws_lambda_permission" "allow_public_function_url" {
   function_url_auth_type = "NONE"
 }
 
-# Permission 2: Grants underlying invocation permissions required by AWS
 resource "aws_lambda_permission" "allow_public_function_invoke" {
   statement_id  = "AllowFunctionURLInvokePublicAccess"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.uptime_checker.function_name
   principal     = "*"
+}
+
+# --- Terraform Outputs ---
+output "dynamodb_table_name" {
+  value = aws_dynamodb_table.uptime_logs.name
+}
+
+output "sns_topic_arn" {
+  value = aws_sns_topic.downtime_alerts.arn
+}
+
+output "lambda_role_arn" {
+  value = aws_iam_role.lambda_exec_role.arn
+}
+
+output "function_url" {
+  value = aws_lambda_function_url.lambda_public_url.function_url
 }
